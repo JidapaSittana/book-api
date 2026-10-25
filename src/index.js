@@ -7,12 +7,10 @@ const helmet = require("helmet");
 const swaggerUi = require("swagger-ui-express");
 const YAML = require("yamljs");
 const path = require("path");
+const axios = require("axios");
 
 // อิมพอร์ต pool จาก db.js
 const pool = require("./db");
-
-// บริการเสริมภายนอก
-const { getBookEnrichment } = require("./services/enrichment-service");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -28,13 +26,61 @@ app.use(
 app.use(morgan("dev"));
 app.use(express.json({ limit: "10kb" }));
 
+// เสิร์ฟไฟล์ Frontend หน้าเว็บ (index.html, app.js)
+app.use(express.static(path.join(__dirname, "../frontend")));
+
 // Swagger UI
-const swaggerDocument = YAML.load(path.join(__dirname, "../openapi.yaml"));
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+try {
+  const swaggerDocument = YAML.load(path.join(__dirname, "../openapi.yaml"));
+  app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+} catch (e) {
+  console.log("Swagger UI Notice:", e.message);
+}
 
 // Helper function จัดการ Error Response
 function sendError(res, statusCode, code, message) {
   return res.status(statusCode).json({ error: { code, message } });
+}
+
+// ==========================================
+// Internal Microservice Client (Port 3001)
+// ส่ง Log กิจกรรมไปยัง Audit Service พร้อม Retry/Fallback
+// ==========================================
+async function sendAuditLog(action, bookTitle) {
+  const maxRetries = 2;
+  const auditServiceUrl = "http://localhost:3001/api/v1/logs";
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(
+        `[Main Service] พยายามส่ง Log ไปยัง Audit Microservice (Port 3001) รอบที่ ${attempt}...`,
+      );
+
+      const response = await axios.post(
+        auditServiceUrl,
+        { action, bookTitle, timestamp: new Date().toISOString() },
+        { timeout: 1500 },
+      );
+
+      if (response.status === 201 || response.status === 200) {
+        console.log(`[Main Service] ส่ง Audit Log สำเร็จ!`);
+        return { success: true, source: "Audit Microservice (Port 3001)" };
+      }
+    } catch (error) {
+      console.warn(
+        `[Main Service Notice] ติดต่อ Port 3001 ไม่สำเร็จ (รอบที่ ${attempt}): ${error.message}`,
+      );
+
+      if (attempt === maxRetries) {
+        console.log(
+          `[Fallback System] ⚠️ Audit Service (3001) ไม่ตอบสนอง -> สลับมาบันทึกลง Local System Log แทน`,
+        );
+        return { success: false, source: "Local System Fallback Log" };
+      }
+
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  }
 }
 
 // REST Routes: Books Resource (MySQL)
@@ -65,7 +111,7 @@ app.get("/api/v1/books", async (req, res, next) => {
   }
 });
 
-// 2. GET ดึงหนังสือตาม ID (แก้ไขตัดส่วนดึงรูปปกออกแล้ว)
+// 2. GET ดึงหนังสือตาม ID
 app.get("/api/v1/books/:id", async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -106,7 +152,7 @@ app.get("/api/v1/books/:id", async (req, res, next) => {
   }
 });
 
-// 3. POST เพิ่มหนังสือใหม่ลง MySQL
+// 3. POST เพิ่มหนังสือใหม่ลง MySQL + ส่ง Audit Log ไป Microservice
 app.post("/api/v1/books", async (req, res, next) => {
   try {
     const { title, author, isbn, price, publisherId, categoryIds } = req.body;
@@ -158,6 +204,9 @@ app.post("/api/v1/books", async (req, res, next) => {
       }
     }
 
+    // ส่ง Log แบบ Non-blocking (Fire-and-forget) เพื่อไม่ให้ API หลักค้าง
+    sendAuditLog("CREATE_BOOK", title).catch(() => {});
+
     res.status(201).json({
       message: "เพิ่มข้อมูลสำเร็จ",
       data: {
@@ -175,7 +224,7 @@ app.post("/api/v1/books", async (req, res, next) => {
   }
 });
 
-// 4. PUT แก้ไขข้อมูลหนังสือทั้งระเบียน
+// 4. PUT แก้ไขข้อมูลหนังสือทั้งระเบียน + ส่ง Audit Log
 app.put("/api/v1/books/:id", async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -214,6 +263,9 @@ app.put("/api/v1/books/:id", async (req, res, next) => {
         }
       }
     }
+
+    // ส่ง Log แบบ Non-blocking
+    sendAuditLog("UPDATE_BOOK", title).catch(() => {});
 
     res.status(200).json({
       message: "แก้ไขข้อมูลสำเร็จ",
@@ -298,6 +350,8 @@ app.patch("/api/v1/books/:id", async (req, res, next) => {
       [id],
     );
 
+    sendAuditLog("PATCH_BOOK", updatedRows[0].title).catch(() => {});
+
     res
       .status(200)
       .json({ message: "แก้ไขข้อมูลสำเร็จ", data: updatedRows[0] });
@@ -306,10 +360,17 @@ app.patch("/api/v1/books/:id", async (req, res, next) => {
   }
 });
 
-// 6. DELETE ลบหนังสือออกจาก MySQL
+// 6. DELETE ลบหนังสือออกจาก MySQL + ส่ง Audit Log
 app.delete("/api/v1/books/:id", async (req, res, next) => {
   try {
     const id = Number(req.params.id);
+
+    // ดึงชื่อหนังสือไว้ก่อนลบเพื่อนำไปทำ Log
+    const [bookRows] = await pool.query(
+      "SELECT title FROM books WHERE id = ?",
+      [id],
+    );
+    const bookTitle = bookRows.length > 0 ? bookRows[0].title : `ID: ${id}`;
 
     // ลบความสัมพันธ์ในตาราง book_categories ก่อนลบหนังสือ เพื่อป้องกัน Foreign Key Error
     await pool.query("DELETE FROM book_categories WHERE book_id = ?", [id]);
@@ -320,32 +381,74 @@ app.delete("/api/v1/books/:id", async (req, res, next) => {
       return sendError(res, 404, "NOT_FOUND", "ไม่พบข้อมูลหนังสือ");
     }
 
+    sendAuditLog("DELETE_BOOK", bookTitle).catch(() => {});
+
     res.status(200).json({ message: "ลบข้อมูลสำเร็จ" });
   } catch (err) {
     next(err);
   }
 });
 
-// 7. GET Enrichment
+// 7. GET Microservice Audit Logs Integration (พอร์ต 3000 เรียกไปดึงประวัติจาก พอร์ต 3001)
 app.get("/api/v1/books/:id/enrichment", async (req, res, next) => {
   try {
     const id = Number(req.params.id);
-    const [rows] = await pool.query("SELECT isbn FROM books WHERE id = ?", [
-      id,
-    ]);
+    const [rows] = await pool.query(
+      "SELECT id, title, isbn FROM books WHERE id = ?",
+      [id],
+    );
 
     if (rows.length === 0) {
       return sendError(res, 404, "NOT_FOUND", "ไม่พบข้อมูลหนังสือ");
     }
 
-    const enrichment = await getBookEnrichment(rows[0].isbn);
+    const book = rows[0];
 
-    return res.status(200).json({
-      data: {
-        bookId: id,
-        enrichment,
-      },
-    });
+    // พยายามยิงไปดึงข้อมูลประวัติจาก Audit Microservice (Port 3001)
+    try {
+      const auditRes = await axios.get("http://localhost:3001/api/v1/logs", {
+        timeout: 2000,
+      });
+      const logs = auditRes.data.data || [];
+      const bookLogs = logs.filter(
+        (l) =>
+          l.bookTitle &&
+          l.bookTitle.trim().toLowerCase() === book.title.trim().toLowerCase(),
+      );
+
+      const lastLogAction =
+        bookLogs.length > 0 ? bookLogs[bookLogs.length - 1].action : "N/A";
+
+      return res.status(200).json({
+        success: true,
+        source: "Internal Audit Microservice (Port 3001)",
+        data: {
+          isbn: book.isbn,
+          title: book.title,
+          publisher: "ระบบคลังหนังสือดิจิทัล",
+          pageCount: `${bookLogs.length} กิจกรรม`,
+          description:
+            bookLogs.length > 0
+              ? `มีประวัติกิจกรรมในระบบ ${bookLogs.length} รายการ (ล่าสุด: ${lastLogAction})`
+              : `หนังสือเล่มนี้ยังไม่มีประวัติการบันทึกกิจกรรมเพิ่มเติมใน Audit Service`,
+        },
+      });
+    } catch (auditErr) {
+      // Fallback กรณี Port 3001 ล่ม
+      return res.status(200).json({
+        success: false,
+        source: "Local Fallback Service",
+        message:
+          "Audit Service (Port 3001) ชั่วคราวไม่พร้อมใช้งาน แสดงข้อมูลสำรอง",
+        data: {
+          isbn: book.isbn,
+          title: book.title,
+          publisher: "ระบบคลังหนังสือดิจิทัล",
+          pageCount: "ไม่ระบุ",
+          description: `รายละเอียดหนังสือเรื่อง "${book.title}" (ระบบสำรองข้อมูลภายใน)`,
+        },
+      });
+    }
   } catch (err) {
     next(err);
   }

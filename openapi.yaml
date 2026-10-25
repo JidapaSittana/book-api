@@ -1,11 +1,13 @@
 openapi: 3.0.0
 info:
-  title: My Project API
+  title: Digital Book Management & Audit System API
   version: 1.0.0
-  description: API documentation for Phase 2
+  description: API documentation for Digital Book Management System with Audit Log Microservice (Phase 3)
 servers:
   - url: http://localhost:3000/api/v1
-    description: Development Server
+    description: Main Backend Server
+  - url: http://localhost:3001/api/v1
+    description: Audit Log Microservice Server
 
 components:
   schemas:
@@ -35,6 +37,27 @@ components:
           items:
             type: integer
           example: [101, 102]
+
+    AuditLog:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        action:
+          type: string
+          example: "CREATE_BOOK"
+        bookTitle:
+          type: string
+          example: "Node.js REST API Design"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-03-30T10:00:00.000Z"
+        service:
+          type: string
+          example: "Notification & Audit Service"
+
     ErrorResponse:
       type: object
       properties:
@@ -179,7 +202,8 @@ paths:
 
   /books/{id}/enrichment:
     get:
-      summary: ดึงข้อมูลหน้าปก
+      summary: ดึงสรุปประวัติกิจกรรม (Audit Log Integration)
+      description: ดึงข้อมูลหนังสือพร้อมสรุปจำนวนประวัติกิจกรรมจาก Audit Microservice (พอร์ต 3001) พร้อมระบบ Fallback
       parameters:
         - in: path
           name: id
@@ -189,21 +213,67 @@ paths:
           description: รหัสหนังสือ
       responses:
         "200":
+          description: สำเร็จ (ดึงข้อมูลประวัติได้ หรือใช้ Fallback กรณี Microservice ล่ม)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  source:
+                    type: string
+                    example: "Audit Microservice (Port 3001)"
+                  data:
+                    type: object
+                    properties:
+                      title:
+                        type: string
+                        example: "Node.js REST API Design"
+                      pageCount:
+                        type: string
+                        example: "2 กิจกรรม"
+
+  # ==========================================
+  # 🔌 Microservice Endpoint (Port 3001)
+  # ==========================================
+  /logs:
+    get:
+      summary: ดึงประวัติ Audit Log ทั้งหมดในระบบ (Microservice Port 3001)
+      responses:
+        "200":
           description: สำเร็จ
           content:
             application/json:
               schema:
                 type: object
                 properties:
+                  success:
+                    type: boolean
+                    example: true
+                  count:
+                    type: integer
+                    example: 5
                   data:
-                    type: object
-                    properties:
-                      bookId:
-                        type: integer
-                      enrichment:
-                        type: object
-                        properties:
-                          coverUrl:
-                            type: string
-                          synopsis:
-                            type: string
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditLog"
+    post:
+      summary: บันทึก Audit Log ใหม่ (Microservice Port 3001)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  type: string
+                  example: "CREATE_BOOK"
+                bookTitle:
+                  type: string
+                  example: "Node.js REST API Design"
+      responses:
+        "201":
+          description: บันทึก Log สำเร็จ

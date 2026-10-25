@@ -1,11 +1,12 @@
 {
-  "name": "project-phase1-67160389-books",
+  "name": "project-phase3-67160389-books",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Digital Book Management System with Audit Log Microservice",
+  "main": "src/app.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js",
+    "test": "jest --coverage"
   },
   "keywords": [],
   "author": "",
@@ -23,6 +24,13 @@
     "yamljs": "^0.3.0"
   },
   "devDependencies": {
+    "jest": "^30.5.2",
     "nodemon": "^3.1.14"
+  },
+  "jest": {
+    "collectCoverageFrom": [
+      "src/**/*.js",
+      "microservices/**/*.js"
+    ]
   }
 }

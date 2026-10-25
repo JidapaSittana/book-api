@@ -14,7 +14,6 @@
     />
 
     <style>
-      /* กำหนดฟอนต์ Sarabun ให้ทุก Element บนหน้าเว็บ */
       *,
       *::before,
       *::after {
@@ -67,7 +66,6 @@
         margin-bottom: 24px;
         border: 1px solid #e2e8f0;
       }
-      /* จัดโครงสร้างฟอร์มแบ่งเป็น 2 คอลัมน์ */
       .form-grid {
         display: grid;
         grid-template-columns: repeat(2, 1fr);
@@ -213,7 +211,6 @@
         text-align: center;
       }
 
-      /* Modal Popup Style */
       .modal {
         display: none;
         position: fixed;
@@ -311,8 +308,6 @@
               <label for="publisherId">สำนักพิมพ์ *</label>
               <select id="publisherId" required>
                 <option value="">-- กรุณาเลือกสำนักพิมพ์ --</option>
-                <option value="1">SE-ED Publishing (ID: 1)</option>
-                <option value="2">Chula Press (ID: 2)</option>
               </select>
             </div>
 
@@ -320,8 +315,6 @@
               <label for="categoryId">หมวดหมู่หนังสือ *</label>
               <select id="categoryId" required>
                 <option value="">-- กรุณาเลือกหมวดหมู่ --</option>
-                <option value="1">เทคโนโลยี / คอมพิวเตอร์ (ID: 1)</option>
-                <option value="2">ทั่วไป (ID: 2)</option>
               </select>
             </div>
           </div>
@@ -343,7 +336,7 @@
                 <th>ผู้แต่ง</th>
                 <th>ISBN</th>
                 <th>ราคา</th>
-                <th style="width: 130px" class="text-center">จัดการ</th>
+                <th style="width: 200px" class="text-center">จัดการ</th>
               </tr>
             </thead>
             <tbody id="book-list"></tbody>
@@ -357,7 +350,7 @@
       <div class="modal-content">
         <div class="modal-header">
           <h2 style="margin: 0; border: none; padding: 0">
-            ✏️ แก้ไขข้อมูลหนังสือ
+            แก้ไขข้อมูลหนังสือ
           </h2>
           <span class="close-btn" onclick="closeEditModal()">&times;</span>
         </div>
@@ -409,6 +402,38 @@
             </button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- Modal สำหรับแสดงประวัติกิจกรรม Audit Log (Microservice Integration) -->
+    <div id="enrichment-modal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 style="margin: 0; border: none; padding: 0; color: #2563eb">
+            ประวัติกิจกรรมของหนังสือเล่มนี้
+          </h2>
+          <span
+            class="close-btn"
+            onclick="
+              document.getElementById('enrichment-modal').style.display = 'none'
+            "
+            >&times;</span
+          >
+        </div>
+        <div id="enrichment-content">
+          <!-- ข้อมูลประวัติกิจกรรมจาก Audit Microservice จะมาแสดงตรงนี้ -->
+        </div>
+        <div style="margin-top: 20px; text-align: right">
+          <button
+            type="button"
+            class="btn-cancel"
+            onclick="
+              document.getElementById('enrichment-modal').style.display = 'none'
+            "
+          >
+            ปิดหน้าต่าง
+          </button>
+        </div>
       </div>
     </div>
 
